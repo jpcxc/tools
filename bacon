@@ -198,7 +198,8 @@ if sync_mode == MODE_ALL:
     # local
     work_index = 1
     print "sync local manifest"
-    for project in project_map_local:
+    for i in project_map_local:
+        project = project_map_local[i]
         print project.path + " (%d/%d)" % (work_index, len(project_map_local))
         _err = project.sync()
         # failed to clone and checkout, add to retry later...
