@@ -4,6 +4,7 @@
 import xml.dom.minidom
 import os
 import sys
+import subprocess
 
 
 # ------------Start of class define-----------
@@ -39,6 +40,15 @@ class Project:
                 os.system("rm -rf " + self.path + "/.git/index.lock")
             _error = os.system("git -C " + self.path + " status >> /dev/null")
             if not _error:
+                # check if remote url changed or not
+                _cmd = "git -C %s remote -v | grep fetch | awk -F \" \" '{print $2}'" % self.path
+                _process = subprocess.Popen(args=_cmd, shell=True, stdout=subprocess.PIPE)
+                _process.wait()
+                _origin = _process.stdout.read().replace("\n", "").replace("\r", "")
+                if cmp(_origin, self.url) != 0:
+                    print "old origin is " + _origin
+                    print "change origin to " + self.url
+                    os.system("git -C %s remote set-url origin %s" % (self.path, self.url))
                 _error = os.system("git -C " + self.path + " fetch origin")
             else:
                 _error = os.system("git clone --single-branch " + self.url + " " + self.path)
