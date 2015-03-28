@@ -33,16 +33,15 @@ class Project:
         _retry_count = 0
         # start to work on git with 10 times retry if errors
         while _error and _retry_count < 10:
+            if _retry_count > 0:
+                print "retry: " + self.path
             if os.path.exists(self.path + "/.git/index.lock"):
                 os.system("rm -rf " + self.path + "/.git/index.lock")
             _error = os.system("git -C " + self.path + " status >> /dev/null")
             if not _error:
                 _error = os.system("git -C " + self.path + " fetch origin")
             else:
-                os.system("rm -rf " + self.path)
                 _error = os.system("git clone --single-branch " + self.url + " " + self.path)
-            if _retry_count > 0:
-                print "retry: " + self.path
             _retry_count += 1
 
         # start to checkout the revision
@@ -157,9 +156,11 @@ project_map_local_index = 0
 if os.path.exists(".repo/local_manifests/"):
     file_local = os.listdir(".repo/local_manifests/")
     for _file in file_local:
-        _root_local = xml.dom.minidom.parse(_file).documentElement
-        project_map_local[project_map_local_index] = parse_project(_root_local, remote_map)
-        project_map_local_index += 1
+        _root_local = xml.dom.minidom.parse(".repo/local_manifests/" + _file).documentElement
+        _local_map = parse_project(_root_local, remote_map)
+        for i in _local_map:
+            project_map_local[project_map_local_index] = _local_map[i]
+            project_map_local_index += 1
 print "there are %d local projects found" % len(project_map_local)
 
 failed_map = {}
@@ -195,13 +196,14 @@ if sync_mode == MODE_ALL:
             retry_index += 1
         work_index += 1
 
-    print "%d" % retry_index + " errors found, start to retry..."
-    for i in retry_map:
-        retry = retry_map[i]
-        _err = retry.sync()
-        if _err:
-            failed_map[failed_index] = retry
-            failed_index += 1
+    if retry_index > 0:
+        print "%d" % retry_index + " errors found, start to retry..."
+        for i in retry_map:
+            retry = retry_map[i]
+            _err = retry.sync()
+            if _err:
+                failed_map[failed_index] = retry
+                failed_index += 1
 elif sync_mode == MODE_ALL_LOCAL:
     if len(project_map_local) == 0:
         print "nothing need to be done"
@@ -209,7 +211,7 @@ elif sync_mode == MODE_ALL_LOCAL:
     work_index = 1
     print "sync local manifest"
     for i in project_map_local:
-        project = project_map[i]
+        project = project_map_local[i]
         print project.path + " (%d/%d)" % (work_index, len(project_map_local))
         _err = project.sync()
         # failed to clone and checkout, add to retry later...
@@ -218,13 +220,14 @@ elif sync_mode == MODE_ALL_LOCAL:
             retry_index += 1
         work_index += 1
 
-    print "%d" % retry_index + " errors found, start to retry..."
-    for i in retry_map:
-        retry = retry_map[i]
-        _err = retry.sync()
-        if _err:
-            failed_map[failed_index] = retry
-            failed_index += 1
+    if retry_index > 0:
+        print "%d" % retry_index + " errors found, start to retry..."
+        for i in retry_map:
+            retry = retry_map[i]
+            _err = retry.sync()
+            if _err:
+                failed_map[failed_index] = retry
+                failed_index += 1
 elif sync_mode == MODE_PATH:
     target = None
     for i in project_map:
@@ -250,6 +253,6 @@ elif sync_mode == MODE_PATH:
 # end of the script to show failed list
 if len(failed_map) > 0:
     for err in failed_map:
-        print "Failed: " + failed_map[err].url
+        print "failed: " + failed_map[err].url
 else:
     print "success!"
