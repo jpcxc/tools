@@ -156,11 +156,12 @@ project_map_local_index = 0
 if os.path.exists(".repo/local_manifests/"):
     file_local = os.listdir(".repo/local_manifests/")
     for _file in file_local:
-        _root_local = xml.dom.minidom.parse(".repo/local_manifests/" + _file).documentElement
-        _local_map = parse_project(_root_local, remote_map)
-        for i in _local_map:
-            project_map_local[project_map_local_index] = _local_map[i]
-            project_map_local_index += 1
+        if _file.endswith(".xml"):
+            _root_local = xml.dom.minidom.parse(".repo/local_manifests/" + _file).documentElement
+            _local_map = parse_project(_root_local, remote_map)
+            for i in _local_map:
+                project_map_local[project_map_local_index] = _local_map[i]
+                project_map_local_index += 1
 print "there are %d local projects found" % len(project_map_local)
 
 failed_map = {}
@@ -236,7 +237,7 @@ elif sync_mode == MODE_PATH:
             target = project
             break
     for i in project_map_local:
-        project = project_map[i]
+        project = project_map_local[i]
         if project.equal(sync_path):
             target = project
             break
