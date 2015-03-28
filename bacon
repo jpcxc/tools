@@ -1,0 +1,255 @@
+#!/usr/bin/env python
+# File: clone.py
+
+import xml.dom.minidom
+import os
+import sys
+
+
+# ------------Start of class define-----------
+class Remote:
+    name = ""
+    fetch = ""
+    revision = ""
+
+    def __init__(self, name, fetch, rev):
+        self.name = name
+        self.fetch = fetch
+        self.revision = rev
+
+
+class Project:
+    path = ""
+    url = ""
+    revision = ""
+
+    def __init__(self, path, url, rev):
+        self.path = path
+        self.url = url
+        self.revision = rev
+
+    def sync(self):
+        _error = 1
+        _retry_count = 0
+        # start to work on git with 10 times retry if errors
+        while _error and _retry_count < 10:
+            if os.path.exists(self.path + "/.git/index.lock"):
+                os.system("rm -rf " + self.path + "/.git/index.lock")
+            _error = os.system("git -C " + self.path + " status >> /dev/null")
+            if not _error:
+                _error = os.system("git -C " + self.path + " fetch origin")
+            else:
+                os.system("rm -rf " + self.path)
+                _error = os.system("git clone --single-branch " + self.url + " " + self.path)
+            if _retry_count > 0:
+                print "retry: " + self.path
+            _retry_count += 1
+
+        # start to checkout the revision
+        if not _error:
+            _error = os.system("git -C " + self.path + " checkout --quiet " + self.revision)
+            if not _error:
+                print "  --checkout " + self.revision
+            else:
+                print "  --checkout error..."
+        else:
+            print "  --git operation error..."
+        return _error
+
+    def equal(self, path):
+        return cmp(path, self.path) == 0
+# --------------End of class define------------
+
+
+# ------------Start of method define-----------
+def parse_remote(_root):
+    _remotes = _root.getElementsByTagName("remote")
+    _remote_map = {}
+    for _remote in _remotes:
+        _name = _remote.getAttribute("name")
+        _fetch = _remote.getAttribute("fetch")
+        _rev = _remote.getAttribute("revision")
+        if _name:
+            _remote_map[_name] = Remote(_name, _fetch, _rev)
+
+    _default_element = _root.getElementsByTagName("default")
+    _default_revision = _default_element[0].getAttribute("revision")
+    _default_remote = _default_element[0].getAttribute("remote")
+    _remote_map["default"] = Remote(_remote_map[_default_remote].name,
+                                    _remote_map[_default_remote].fetch, _default_revision)
+    return _remote_map
+
+
+def parse_project(_root, _remote_map):
+    _projects = _root.getElementsByTagName("project")
+
+    _project_index = 0
+    _project_map = {}
+    default = _remote_map["default"]
+    for _project in _projects:
+        _path = _project.getAttribute("path")
+        _name = _project.getAttribute("name")
+        _remote = _project.getAttribute("remote")
+        _revision = _project.getAttribute("revision")
+
+        if not _remote:
+            _git_url = default.fetch + "/" + _name
+            _remote = default.name
+        else:
+            _git_url = _remote_map[_remote].fetch + "/" + _name
+
+        if not _revision:
+            _revision = _remote_map[_remote].revision
+        if not _revision:
+            _revision = default.revision
+        if not _revision.startswith("refs/tags/"):
+            if _revision.startswith("refs/heads/"):
+                _revision = _revision.replace("refs/heads/", "")
+            _revision = "origin/%s" % _revision
+        _project_map[_project_index] = Project(_path, _git_url, _revision)
+        _project_index += 1
+    return _project_map
+# --------------End of method define------------
+
+MODE_ALL = 0
+MODE_ALL_LOCAL = 1
+MODE_PATH = 2
+
+sync_mode = MODE_ALL
+sync_path = ""
+# parse the command
+length = len(sys.argv)
+if length == 1:
+    print "usage: bacon sync [-l]|[PATH]"
+    sys.exit(0)
+elif length == 2:
+    if cmp(sys.argv[1], "sync") == 0:
+        sync_mode = MODE_ALL
+    else:
+        print "bad command " + sys.argv[1]
+elif length == 3:
+    if cmp(sys.argv[2], "-l") == 0:
+        sync_mode = MODE_ALL_LOCAL
+    else:
+        sync_mode = MODE_PATH
+        sync_path = sys.argv[2]
+else:
+    print "too many args..."
+    print "usage: bacon sync [-l]|[PATH]"
+    sys.exit(0)
+
+# start to exec the script
+MANIFEST = ".repo/manifest.xml"
+
+# open the manifest file
+root = xml.dom.minidom.parse(MANIFEST).documentElement
+
+# parse the remotes
+remote_map = parse_remote(root)
+
+# parse the projects
+project_map = parse_project(root, remote_map)
+print "there are %d projects in manifest" % len(project_map)
+
+# parse the local projects
+project_map_local = {}
+project_map_local_index = 0
+if os.path.exists(".repo/local_manifests/"):
+    file_local = os.listdir(".repo/local_manifests/")
+    for _file in file_local:
+        _root_local = xml.dom.minidom.parse(_file).documentElement
+        project_map_local[project_map_local_index] = parse_project(_root_local, remote_map)
+        project_map_local_index += 1
+print "there are %d local projects found" % len(project_map_local)
+
+failed_map = {}
+failed_index = 0
+
+work_index = 1
+retry_map = {}
+retry_index = 0
+if sync_mode == MODE_ALL:
+    if len(project_map) == 0:
+        print "nothing need to be done"
+        sys.exit(0)
+    # main
+    for i in project_map:
+        project = project_map[i]
+        print project.path + " (%d/%d)" % (work_index, len(project_map))
+        _err = project.sync()
+        # failed to clone and checkout, add to retry later...
+        if _err:
+            retry_map[retry_index] = project
+            retry_index += 1
+        work_index += 1
+
+    # local
+    work_index = 1
+    print "sync local manifest"
+    for project in project_map_local:
+        print project.path + " (%d/%d)" % (work_index, len(project_map_local))
+        _err = project.sync()
+        # failed to clone and checkout, add to retry later...
+        if _err:
+            retry_map[retry_index] = project
+            retry_index += 1
+        work_index += 1
+
+    print "%d" % retry_index + " errors found, start to retry..."
+    for i in retry_map:
+        retry = retry_map[i]
+        _err = retry.sync()
+        if _err:
+            failed_map[failed_index] = retry
+            failed_index += 1
+elif sync_mode == MODE_ALL_LOCAL:
+    if len(project_map_local) == 0:
+        print "nothing need to be done"
+        sys.exit(0)
+    work_index = 1
+    print "sync local manifest"
+    for i in project_map_local:
+        project = project_map[i]
+        print project.path + " (%d/%d)" % (work_index, len(project_map_local))
+        _err = project.sync()
+        # failed to clone and checkout, add to retry later...
+        if _err:
+            retry_map[retry_index] = project
+            retry_index += 1
+        work_index += 1
+
+    print "%d" % retry_index + " errors found, start to retry..."
+    for i in retry_map:
+        retry = retry_map[i]
+        _err = retry.sync()
+        if _err:
+            failed_map[failed_index] = retry
+            failed_index += 1
+elif sync_mode == MODE_PATH:
+    target = None
+    for i in project_map:
+        project = project_map[i]
+        if project.equal(sync_path):
+            target = project
+            break
+    for i in project_map_local:
+        project = project_map[i]
+        if project.equal(sync_path):
+            target = project
+            break
+
+    if target:
+        print target.path + " (1/1)"
+        err = target.sync()
+        if err:
+            failed_map[0] = target
+    else:
+        print "no such path found:\n\t " + sync_path
+        sys.exit(1)
+
+# end of the script to show failed list
+if len(failed_map) > 0:
+    for err in failed_map:
+        print "Failed: " + failed_map[err].url
+else:
+    print "success!"
