@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#Author: jpcxc@126.com
+# Author: jpcxc@126.com
 
 import xml.dom.minidom
 import os
@@ -21,11 +21,13 @@ class Remote:
 
 class Project:
     path = ""
+    remote = ""
     url = ""
     revision = ""
 
-    def __init__(self, path, url, rev):
+    def __init__(self, path, remote, url, rev):
         self.path = path
+        self.remote = remote
         self.url = url
         self.revision = rev
 
@@ -36,31 +38,61 @@ class Project:
         while _error and _retry_count < 10:
             if _retry_count > 0:
                 print "retry: " + self.path
-            if os.path.exists(self.path + "/.git/index.lock"):
-                os.system("rm -rf " + self.path + "/.git/index.lock")
-            _error = os.system("git -C " + self.path + " status >> /dev/null")
+
+            # basic git operation with specified path
+            _git_base = "git -C " + self.path
+
+            # if there is another git operation exit unexpectedly, just remove the lock
+            _git_lock_file = self.path + "/.git/index.lock"
+            if os.path.exists(_git_lock_file):
+                os.system("rm -rf " + _git_lock_file)
+
+            # check if the path contains a git repo
+            _error = os.system(_git_base + " status >> /dev/null")
             if not _error:
                 # check if remote url changed or not
-                _cmd = "git -C %s remote -v | grep fetch | awk -F \" \" '{print $2}'" % self.path
+                _cmd = _git_base + " remote -v | grep fetch | awk -F \" \" '{print $2}'"
                 _process = subprocess.Popen(args=_cmd, shell=True, stdout=subprocess.PIPE)
                 _process.wait()
-                _origin = _process.stdout.read().replace("\n", "").replace("\r", "")
-                if cmp(_origin, self.url) != 0:
-                    print "old origin is " + _origin
-                    print "change origin to " + self.url
-                    os.system("git -C %s remote set-url origin %s" % (self.path, self.url))
-                _error = os.system("git -C " + self.path + " fetch origin")
+                _result = _process.stdout.read();
+                _remote_url = _result.replace("\n", "").replace("\r", "")
+
+                _cmd = _git_base + " remote -v | grep fetch | awk -F \" \" '{print $1}'"
+                _process = subprocess.Popen(args=_cmd, shell=True, stdout=subprocess.PIPE)
+                _process.wait()
+                _result = _process.stdout.read();
+                _remote_name = _result.replace("\n", "").replace("\r", "")
+
+                # check remote name
+                if cmp(_remote_name, self.remote) != 0:
+                    _error = os.system(_git_base + " remote rename %s %s" % (_remote_name, self.remote))
+                    if not _error:
+                        print "changed remote name from %s to %s" % (_remote_name, self.remote)
+                    else:
+                        print "change remote name failed ..."
+                        return _error
+
+                # check remote url
+                if cmp(_remote_url, self.url) != 0:
+                    _error = os.system(_git_base + " remote set-url %s %s " % (self.remote, self.url))
+                    if not _error:
+                        print "changed remote url to " + self.url
+                    else:
+                        print "change remote url failed ..."
+                        return _error
+
+                _error = os.system(_git_base + " fetch " + self.remote)
             else:
                 _error = os.system("git clone --single-branch " + self.url + " " + self.path)
             _retry_count += 1
 
         # start to checkout the revision
         if not _error:
-            _error = os.system("git -C " + self.path + " checkout --quiet " + self.revision)
+            _error = os.system(_git_base + " checkout --quiet " + self.revision)
             if not _error:
                 print "  --checkout " + self.revision
             else:
-                print "  --checkout error..."
+                print "  --checkout error (%s)" % self.revision
         else:
             print "  --git operation error..."
         return _error
@@ -114,8 +146,8 @@ def parse_project(_root, _remote_map):
         if not _revision.startswith("refs/tags/"):
             if _revision.startswith("refs/heads/"):
                 _revision = _revision.replace("refs/heads/", "")
-            _revision = "origin/%s" % _revision
-        _project_map[_project_index] = Project(_path, _git_url, _revision)
+            _revision = "%s/%s" % (_remote, _revision)
+        _project_map[_project_index] = Project(_path, _remote, _git_url, _revision)
         _project_index += 1
     return _project_map
 # --------------End of method define------------
@@ -149,6 +181,12 @@ else:
 
 # start to exec the script
 MANIFEST = ".repo/manifest.xml"
+if not os.path.exits(MANIFEST):
+    MANIFEST = ".repo/manifests/default.xml"
+
+if not os.path.exits(MANIFEST):
+    print "manifest file not found on both .repo/manifest.xml and .repo/manifests/default.xml"
+    sys.exit(2)
 
 # open the manifest file
 root = xml.dom.minidom.parse(MANIFEST).documentElement
