@@ -38,7 +38,11 @@ class Project:
                 print "retry: " + self.path
             if os.path.exists(self.path + "/.git/index.lock"):
                 os.system("rm -rf " + self.path + "/.git/index.lock")
-            _error = os.system("git -C " + self.path + " status >> /dev/null")
+            # check the path exists or not
+            if not os.path.exists(self.path):
+                _error = 1
+            else:
+                _error = os.system("git -C " + self.path + " status >> /dev/null")
             if not _error:
                 # check if remote url changed or not
                 _cmd = "git -C %s remote -v | grep fetch | awk -F \" \" '{print $2}'" % self.path
